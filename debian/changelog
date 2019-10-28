@@ -1,0 +1,11 @@
+blabel (0.07-1) unstable; urgency=low
+
+  * Fix compatibility with Debian 8
+
+ -- Ari Sovijärvi (APz) <ari@sovijarvi.fi>  Mon, 29 Jun 2015 12:47:35 +0300
+
+blabel (0.06-1) unstable; urgency=low
+
+  * Initial packaging
+
+ -- Ari Sovijärvi (APz) <ari@sovijarvi.fi>  Thu, 7 Jun 2012 07:17:03 +0300

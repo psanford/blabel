@@ -1,0 +1,31 @@
+Using:
+
+Switch the printer to 'extended' mode (flip the switch at the back to
+'E'), connect it to your box and turn the printer on. Add to CUPS as an
+ASCII-printer (the printer driver should say "Generic text-only
+printer"), while the port is "usb://Brother/PT-1230PC" or similar.
+
+After that run B-label (it should appear under 'Graphics' section in
+your system menus), select the printer you just added and print away!
+
+-------------------------------------------------------------------------------
+
+This program is not even near completition, but I decided to release it as it's
+perfectly capable of handling most every day use cases for the printer.
+
+When looking at the code, please bear in mind that I'm not a programmer, and
+this was the first GTK-Glade program I've ever done. I'll eventually clean it up
+more and probably remove the GD depency aswell.
+
+For any feedback, you can mail me at ari@sovijarvi.fi, or contact me via
+IRC on EFNet, IRCnet or Freenode (my nick is 'APz').
+
+Have fun!
+
+http://apz.fi/blabel/
+
+Quick version history:
+
+0.05		Initial version released
+0.06		Adds command line printing, .deb packaging
+0.07		Minor fixes, updated .deb -packaging to work with newer distros

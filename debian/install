@@ -1,0 +1,5 @@
+blabel usr/bin/
+blabel.png usr/share/pixmaps/
+blabel.glade usr/share/blabel/
+blabel.desktop usr/share/applications/
+man/man1/blabel.1.gz usr/share/man/man1
