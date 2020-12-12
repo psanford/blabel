@@ -1,11 +1,125 @@
-blabel (0.07-1) unstable; urgency=low
+blabel (1.03-28) buster; urgency=low
 
-  * Fix compatibility with Debian 8
+  * Debian package now depends on libgtk-3-0 (>= 3.20.0), as the Glade UI we use
+    won't load correctly for older versions.
+  * "Clear text and style" now defaults to system's default font instead of hardcoded
+    Sans 12 as it doens't seem to be available in all systems.
+  * Implemented "Clear text and restore saved style" which does exactly what it
+    says on the tin.
 
- -- Ari Sovijärvi (APz) <ari@sovijarvi.fi>  Mon, 29 Jun 2015 12:47:35 +0300
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Thu, 23 Apr 2020 18:51:31 +0300
 
-blabel (0.06-1) unstable; urgency=low
+blabel (1.02-25) buster; urgency=low
 
-  * Initial packaging
+  * Fix a bug that prevented scrolling back the preview area.
 
- -- Ari Sovijärvi (APz) <ari@sovijarvi.fi>  Thu, 7 Jun 2012 07:17:03 +0300
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Tue, 07 Apr 2020 17:07:06 +0200
+
+blabel (1.01-24) buster; urgency=low
+
+  * Almost 5 months later we've graduaded into full release!
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Mon, 25 Mar 2020 13:54:52 +0200
+
+blabel (1.00-b21) buster; urgency=low
+
+  * Change our category in the .desktop-file, we're now an Office program.
+  * Clear-button has a menu to clear just the text or text and formatting.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Mon, 23 Mar 2020 04:32:55 +0200
+
+blabel (1.00-b20) buster; urgency=low
+
+  * First beta release. We're feature complete, now we need to be (relatively)
+    bug free.
+  * Update man-pages about the executable name changes.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Wed, 18 Mar 2020 16:56:34 +0200
+
+blabel (1.00-a18) buster; urgency=low
+
+  * "Clear text" changed to "Clear entry", it also clears header picture.
+  * Implemented command line parameters in blabel, we're now feature complete!
+  * blabel.pl was renamed to blabel, same change to blabel-print.pl.
+  * Last Alpha-version. Next up: Betas!
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Tue, 17 Mar 2020 21:09:26 +0200
+
+blabel (1.00-a17) buster; urgency=low
+
+  * Deal with firmware issue in PT-1230PC that causes empty stickers printed before
+    the actual job
+  * Add a 1 pixel margin on both sides of the sticker to compensate now missing
+    linefeeds thanks to previous point.
+  * Fix bug that appeared when "Remove header picture" button was pressed but none
+    was selected previously.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Wed, 11 Mar 2020 01:59:32 +0200
+
+blabel (1.00-a16) buster; urgency=low
+
+  * Preliminary support for a header graphics file. Currently it will take
+    any JPEG or PNG file and resize that, but it does not turn them monochrome.
+    Attempting to print color files will result in less than satisfactory results.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Sun, 08 Mar 2020 22:46:03 +0200
+
+blabel (1.00-a15) buster; urgency=low
+
+  * blabel-print.pl now issues invalidate-command to printer to return it
+    into sane state and to avoid losing 1-2 pixel rows at random.
+  * Preview in blabel.pl now scrolls correctly.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Thu, 05 Mar 2020 23:05:34 +0200
+
+blabel (1.00-a13) buster; urgency=medium
+
+  * Printer name sanity check in blabel-print.pl.
+  * Implemented quiet mode in blabel-print.pl.
+  * blabel-print.pl is now feature complete!
+  * blabel-print.pl's graphical engine is partitially rewritten, hopefully
+    the issue with missing or extra black lines is finally dealt with.
+  * Autocut is now controllable from GUI.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Tue, 11 Feb 2020 01:23:33 +0200
+
+blabel (1.00-a11) buster; urgency=medium
+
+  * Enable autocut on models that support it.
+  * Fix linefeed from empty lines, you can now only use the last line and have it perfectly centered.
+  * Adjusted margins, this will be a configurable option later.
+  * Disable printing if no printers are available.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Thu, 06 Feb 2020 22:59:44 +0200
+
+blabel (1.00-a8) buster; urgency=medium
+
+  * Fixed bug in blabel-print.pl that caused last 1-2 pixels not to be printed.
+  * Optimized graphics generation so it's a lot faster on really old computers.
+  * UI tweaks so it looks a bit prettier.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Fri, 31 Jan 2020 22:19:05 +0200
+
+blabel (1.00-a5) buster; urgency=medium
+
+  * Almost feature-complete UI.
+  * Configuration save/load now works.
+  * Lot of bugs killed.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Fri, 31 Jan 2020 19:36:29 +0200
+
+blabel (1.00-a2) buster; urgency=medium
+
+  * Still an alpha version, contains broken stuff!
+    - No configuration saving
+    - No configuration dialog
+    - Probably blows up if you look at it wrong
+  * Everything else is good. Maybe.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Thu, 30 Jan 2020 22:06:32 +0200
+
+blabel (1.00-a1) buster; urgency=medium
+
+  * Original packaging for series 1 B-Label.
+
+ -- Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>  Fri, 08 Nov 2019 14:55:45 +0200

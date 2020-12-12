@@ -1,5 +1,4 @@
-/usr/bin
-/usr/share/pixmaps
 /usr/share/blabel
-/usr/share/applications
-/usr/share/man/man1
+/usr/bin
+/usr/share/applications/
+/usr/share/pixmaps/

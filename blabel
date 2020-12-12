@@ -1,256 +1,84 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
+# B-Label's GTK3 GUI part
 
-# (C) 2012 A. Sovij‰rvi (ari@sovijarvi.fi)
-# Distributed under the Perl Artistic License.
+# B-Label (C) 2011-2020 by Ari Sovij√§rvi <ari.sovijarvi@cleverbit.fi>
+# Released under Perl artistic license.
 
-# Please see the readme.txt for an apology for the horrible code.
-
-use Gtk2 -init;
-use Gtk2::GladeXML;
-use Cairo;
-use GD;
+use constant VERSION=>"v1.03 build 28";
+use constant VERSIONDATE=>"2020-04-23";
+use Gtk3 -init;
+use Glib qw/TRUE FALSE/;
+use File::Temp qw/tempfile/;
+use POSIX;
+use Pango;
+use Net::CUPS;
 use Getopt::Long;
+use Pod::Usage;
+use utf8::all;
+use warnings;
 
-# depencies; debian/ubuntu-packages:
-# libgtk2-perl
-# libgtk2-gladexml-perl
-# libgd-gd2-perl
+# Loads the Glade-file and initializes our UI parts.
+sub init_gui_config {
+  my $cmd_printer=$_[0];
+  my $cmd_autocut=$_[1];
+  my $cmd_tape=$_[2];
+  my $cmd_valign=$_[3];
+  my $cmd_halign=$_[4];
+  my $cmd_inverse=$_[5];
 
-our $defline1="";
-our $defline2="";
-our $deffont1="";
-our $deffont2="";
+  my $i;
 
-sub initialize {
-  my $output;
-  $output=chr(0x1B).'@';
-  $output=$output.chr(0x1B).'iS';
-  $output=$output.chr(0x1B).'iR'.chr(0x01);
-  return $output;
-}
+  my $gtkbuilder=new Gtk3::Builder;
 
-# 0: gd image object
-sub processimage {
-  my $inputimage=$_[0];
-  $inputimage=$inputimage->copyRotate90(); # we turn it 90 degrees before anything else...
-  my $charcount;
-  my $x;
-  my $y;
-  my @pixel=();
-  my ($width,$height)=$inputimage->getBounds();
-  my $pixelgroups;
-  my $output="";
+  $gtkbuilder->add_from_file("/usr/share/blabel/blabel.glade");
 
-  # I found no perfectly working way of turning pango's antialiasing off, so we'll handle
-  # the gray -> bw conversion here.
-  for ($y=$height-1; $y>-1; $y--) {
-    for ($x=$width/8; $x>-1; $x--) {
-      my @inpixels=();
-      foreach (0..7) {
-        my $tmpcolor=$inputimage->getPixel(($x*8)+$_,$y);
-        my ($r, $g, $b)=$inputimage->rgb($tmpcolor);
-        if ($r<150) { # it's B/W, so we only need to compare one value
-          $inpixels[$_]=1;
-        } else {
-          $inpixels[$_]=0;
-        }
-      }
+  our $main_window=$gtkbuilder->get_object("blabel-window");
+  our $about_window=$gtkbuilder->get_object("about-window");
+  our $reset_window=$gtkbuilder->get_object("reset-window");
+  our $preview=$gtkbuilder->get_object("preview");
+  our $inverse=$gtkbuilder->get_object("inverse");
+  our $halign=$gtkbuilder->get_object("halign");
+  our $valign=$gtkbuilder->get_object("valign");
+  our $previewscroll=$gtkbuilder->get_object("previewscroll");
+  our $tapetype=$gtkbuilder->get_object("tapetype");
+  our $autocut=$gtkbuilder->get_object("autocut");
+  our $printerselect=$gtkbuilder->get_object("printerselect");
+  our $headerfile=$gtkbuilder->get_object("headerfile");
+  our $print_now=$gtkbuilder->get_object("print_now");
 
-      $pixel[$x]=ord(pack('B8', $inpixels[0].$inpixels[1].$inpixels[2].$inpixels[3].$inpixels[4].$inpixels[5].$inpixels[6].$inpixels[7]));
-    }
+  our @fontselect;
+  our @entry;
+  our @underline;
+  our @strikethrough;
 
-    $output=$output.'G'.chr(($width/8)+4).chr(0x00).chr(0x00).chr(0x00).chr(0x00).chr(0x00);
-    for ($pixelgroups=0; $pixelgroups<($width/8); $pixelgroups++) {
-      $output=$output.chr($pixel[$pixelgroups]);
-    }
-  }
-  return $output;
-}
+  our $defaultfont;
+  our @configfont=();
 
-# 0: amount of extra lines
-sub linefeed {
-  my $feedcount=$_[0];
-  my $output="";
+  our $tempfilename;
+  (undef, $tempfilename)=tempfile('/tmp/blabel.XXXXXX', OPEN=>0);
 
-  foreach (0..$feedcount) {
-    $output=$output."Z";
-  }
-  $output=$output.chr(0x1A);
-  return $output;
-}
-
-# -- CUPS hackery -----------------------------------------------------------
-
-# This is rather ghetto, but I didn't want to 
-# add depencies to perl cups modules.
-
-# 0: printer name; if not empty, we'll return the input string's index in list
-sub get_printers {
-  my $searchname=$_[0];
-  my $indexnumber=0;
-  my @foundprinters=();
-  my @nameline=();
-  open($printerlist, "lpstat -a |");
-  my @printerresult=<$printerlist>;
-  close($printerlist);
-  foreach (@printerresult) {
-    @nameline=split(" ", $_);
-    push(@foundprinters, $nameline[0]);
-    if (($searchname ne "") && ($nameline[0] eq $searchname)) {
-      last;
-    }
-    $indexnumber++;
-  }
-  if ($searchname ne "") {
-    return $indexnumber;
-  } else {
-    return @foundprinters;
-  }
-}
-
-# -- GUI elements -----------------------------------------------------------
-sub kill_editorwindow {
-  Gtk2->main_quit;
-  &settings("save");
-  print "Thanks for using B-label!\n";
-}
-
-sub show_about {
-  $aboutbox->run;
-  $aboutbox->hide;
-}
-
-sub fill_printerlist {
-  my @printers=&get_printers("");
-  my $foundprinters=0;
-
-  foreach (@printers) {
-    $foundprinters=1;
-    $printerselect->append_text("$_");
+  for ($i=1; $i<5; $i++) {
+    $fontselect[$i]=$gtkbuilder->get_object("fontselect".$i);
+    $entry[$i]=$gtkbuilder->get_object("entry".$i);
+    $underline[$i]=$gtkbuilder->get_object("underlinetoggle".$i);
+    $strikethrough[$i]=$gtkbuilder->get_object("strikethroughtoggle".$i);
   }
 
-  # if we have printers, remove the "not found"-entry
-  if ($foundprinters>0) {
-    $printerselect->remove_text(0);
-    $printerselect->set_active(0);
-  }
-}
+  our $surface_width=0;
+  our $surface_height=0;
+  our $surface="";
+  our $cr="";
+  our $lastwidth=0;
+  our $viewscrolled=0;
 
-# escapes the couple of characters that make pango go haywire
-# 0: text string to sort out
-sub escape_characters {
-  my $escape_string=$_[0];
-  $escape_string =~ s/\&/&amp;/g;
-  $escape_string =~ s/\</&lt;/g;
-  $escape_string =~ s/\>/&gt;/g;
-  return $escape_string;
-}
+  &load_config($cmd_printer, $cmd_autocut, $cmd_tape, $cmd_valign, $cmd_halign, $cmd_inverse);
 
-# 0: print mode (0=for printer, 1=for screen), unimplemented at the moment,
-#    but will later allow trying out different tape colors in the preview window.
-# 1: line 1
-# 2: line 2
-sub render_text {
-  my $printmode=$_[0];
-  my $textline1=&escape_characters($_[1]);
-  my $textline2=&escape_characters($_[2]);
+  # We load the configuration just before connecting the signals, so changing all the
+  # GUI parts to match correct state doesn't fire the update_preview function bazillion times.
+  $gtkbuilder->connect_signals;
 
-  my @foreground=(255, 255, 255);
-  my @background=(0, 0, 0);
-  my $maxwidth=32767;
-  my $maxheight=64; # 12 & 9mm: 64px, 6mm: 40px;
-  my $effects1="";
-  my $effects2="";
-  my $surface=Cairo::ImageSurface->create('rgb24', $maxwidth, $maxheight);
-  my $cr=Cairo::Context->create($surface); 
-
-  $cr->rectangle(0, 0, $maxwidth, $maxheight); 
-  if ($inverse->get_active) {
-    $cr->set_source_rgb(@background); 
-  } else {
-    $cr->set_source_rgb(@foreground); 
-  }
-  $cr->fill; 
-
-  my $pango_layout=Gtk2::Pango::Cairo::create_layout($cr); 
-  $pango_layout->set_alignment(lc($xalign->get_active_text()));
-  $pango_layout->set_spacing(-5000);
-
-  if ($strikethrough1->get_active) { $effects1=$effects1." strikethrough=\"true\""; }
-  if ($strikethrough2->get_active) { $effects2=$effects2." strikethrough=\"true\""; }
-
-  if ($underline1->get_active) { $effects1=$effects1." underline=\"single\""; }
-  if ($underline2->get_active) { $effects2=$effects2." underline=\"single\""; }
-
-  if (($textline1 eq "") && ($textline2 eq "")) {
-    $pango_layout->set_markup("<span $effects1 font=\"".$font1->get_font_name()."\">Preview</span>"); 
-    $printbutton->set_sensitive(0);
-  } else {
-    my $pango_output="";
-
-    if ($textline1 ne "") {
-      $pango_output=$pango_output."<span $effects1 font=\"".$font1->get_font_name()."\">".$textline1."</span>";
-    }
-
-    if (($textline1 ne "") && ($textline2 ne "")) {
-      $pango_output=$pango_output."\n";
-    }
-
-    if ($textline2 ne "") {
-      $pango_output=$pango_output."<span $effects2 font=\"".$font2->get_font_name()."\">".$textline2."</span>";
-    }
-    $printbutton->set_sensitive(1);
-
-    $pango_layout->set_markup($pango_output);
-  }
-
-  if ($inverse->get_active) {
-    $cr->set_source_rgb(@foreground);
-  } else {
-    $cr->set_source_rgb(@background);
-  }
-
-  my ($xsize,$ysize)=$pango_layout->get_pixel_size();
-
-  if ($yalign->get_active()==0) { $cr->move_to(0,0); } # top
-  if ($yalign->get_active()==1) { $cr->move_to(0,($maxheight/2)-($ysize/2)); } # middle
-  if ($yalign->get_active()==2) { $cr->move_to(0,$maxheight-$ysize); } # bottom
-
-  Gtk2::Pango::Cairo::show_layout($cr, $pango_layout);
-
-  $cr->show_page();
-
-  my $width=$xsize;
-  my $height=$surface->get_height;
-  my $stride=$surface->get_stride;
-  my $data=$surface->get_data;
-  my $xpixbuf=Gtk2::Gdk::Pixbuf->new_from_data($data, 'rgb', FALSE, 8, $width, $height, $stride);
-
-  return $xpixbuf;
-}
-
-# Reacts to most GUI changes, updates the preview to match the changes.
-sub update_preview {
-  $preview->set_from_pixbuf(&render_text(1, $line1->get_text, $line2->get_text));
-  my $hadj=$previewscroll->get_hadjustment;
-  $hadj->set_value($hadj->upper);
-  $previewscroll->set_hadjustment($hadj);
-}
-
-# Print out the result with more or less ghetto way of passing data from pixbuf to GD.
-sub print_all {
-  my $output=&render_text(1, $line1->get_text, $line2->get_text);
-  my $pngdata=$output->save_to_buffer("png");
-
-  my $outputimage=GD::Image->newFromPngData($pngdata);
-  my $rawdata=&processimage($outputimage);
-
-  open(my $printer, "| lpr -C \"label/sticker\" -P".$printerselect->get_active_text());
-  binmode $printer;
-  print $printer &initialize;
-  print $printer $rawdata;
-  print $printer &linefeed(5);
-  close($printer);
+  $main_window->set_title("B-Label");
+  $main_window->show;
 }
 
 # 0: input boolean
@@ -263,138 +91,752 @@ sub boolean2int {
   }
 }
 
-# 0: "load" or "save"
-sub settings {
-  my $mode=$_[0];
+# Dumps the configuration into a simple text file
+sub save_config {
+  my $i;
+  my $settings;
 
-  if ($mode eq "save") {
-    open(my $settingsfile, "> ".$ENV{HOME}."/.blabel.conf");
-    print $settingsfile "# B-label configuration file\n";
-    print $settingsfile $font1->get_font_name."\n";
-    print $settingsfile $font2->get_font_name."\n";
-    print $settingsfile $printerselect->get_active_text()."\n";
-    print $settingsfile $xalign->get_active."\n";
-    print $settingsfile $yalign->get_active."\n";
-    print $settingsfile &boolean2int($inverse->get_active)."\n";
-    print $settingsfile &boolean2int($underline1->get_active)."\n";
-    print $settingsfile &boolean2int($underline2->get_active)."\n";
-    print $settingsfile &boolean2int($strikethrough1->get_active)."\n";
-    print $settingsfile &boolean2int($strikethrough2->get_active)."\n";
-    close($settingsfile);
+  if (! -d $ENV{HOME}."/.config") {
+    print "! .config directory missing, creating.\n" if not $quiet;
+    mkdir($ENV{HOME}."/.config") || die ("Can't create .config -directory!");
   }
 
-  if (($mode eq "load") && (-e $ENV{HOME}."/.blabel.conf" )) {
-    open(my $settingsfile, $ENV{HOME}."/.blabel.conf");
-    my @settings=<$settingsfile>;
-    close($settingsfile);
-    chomp(@settings);
-    $font1->set_font_name($settings[1]);
-    $font2->set_font_name($settings[2]);
-    $printerselect->set_active(&get_printers($settings[3]));
-    $xalign->set_active($settings[4]);
-    $yalign->set_active($settings[5]);
-    $inverse->set_active($settings[6]);
-    $underline1->set_active($settings[7]);
-    $underline2->set_active($settings[8]);
-    $strikethrough1->set_active($settings[9]);
-    $strikethrough2->set_active($settings[10]);
+  if (! -d $ENV{HOME}."/.config/blabel") {
+    print "! blabel directory missing, creating.\n" if not $quiet;
+    mkdir($ENV{HOME}."/.config/blabel") || die ("Can't create blabel -directory!");
+  }
+
+  open($settings, "> ".$ENV{HOME}."/.config/blabel/blabel.conf");
+  print $settings "# B-label configuration file\n";
+  print $settings "ver2\n";
+
+  for ($i=1; $i<5; $i++) {
+    print $settings $fontselect[$i]->get_font_name."\n";
+    print $settings &boolean2int($underline[$i]->get_active)."\n";
+    print $settings &boolean2int($strikethrough[$i]->get_active)."\n";
+  }
+  print $settings &boolean2int($inverse->get_active)."\n";
+  print $settings $halign->get_active_id."\n";
+  print $settings $valign->get_active_id."\n";
+  print $settings $tapetype->get_active_id."\n";
+  print $settings $printerselect->get_active_text."\n";
+  print $settings &boolean2int($autocut->get_active)."\n";
+
+  print $settings "\n";
+
+  close($settings);
+}
+
+# Reads the configuration, attempts to validate it and then restores the values.
+# Also populates the printer list dropdown menu.
+sub load_config {
+  my $cmd_printer=$_[0];
+  my $cmd_autocut=$_[1];
+  my $cmd_tape=$_[2];
+  my $cmd_valign=$_[3];
+  my $cmd_halign=$_[4];
+  my $cmd_inverse=$_[5];
+
+  my $i;
+
+  # Majority of the default values come from the Glade file, so we can just exit
+  # this function if the configuration file fails to load. The only thing we need
+  # to accomplish here is to populate the printer list.
+
+  print "Printers in this system:\n" if not $quiet;
+
+  my @printers=$cups->getDestinations();
+  foreach my $printer (@printers) {
+    my $printername=$printer->getName();
+    $printerselect->append_text($printername);
+    print "- $printername\n" if not $quiet;
+  }
+
+  my $printercount=@printers;
+
+  print "\n$printercount printers found.\n" if not $quiet;
+
+  # If there's at least one printer, get rid of the "None" option.
+  if ($printercount>0) {
+    $printerselect->remove(0);
+  }
+  $printerselect->set_active(0);
+
+  # Now that we have the printer list set up, try actually loading the configuration.
+
+  if (-f $ENV{HOME}."/.config/blabel/blabel.conf") {
+    print "- Reading configuration file.\n" if not $quiet;
+    open($settings, $ENV{HOME}."/.config/blabel/blabel.conf");
+    my @configuration=<$settings>;
+    close($settings);
+    chomp(@configuration);
+
+    if ($configuration[1] ne "ver2") {
+      print "! Incorrect configuration version. Expected 'ver2', got '${configuration[1]}'.\n" if not $quiet;
+      return;
+    } else {
+      print "- Configuration is in compatible version.\n" if not $quiet;
+
+      print "- Restoring settings\n" if not $quiet;
+
+      # Since the system default font varies, we get whatever is defaulted here.
+      $defaultfont=$fontselect[1]->get_font_name;
+
+      # Restore per-line settings
+      for ($i=0; $i<4; $i++) {
+        print "  Line ".($i+1)."\n" if not $quiet;
+        print "    Font: $configuration[($i*3)+2]\n" if not $quiet;
+        $fontselect[$i+1]->set_font_name($configuration[($i*3)+2]);
+
+        # The clear input dialog's restore saved font is taken here.
+        $configfont[$i+1]=$fontselect[$i+1]->get_font_name;
+        print "    Underline: $configuration[($i*3)+3]\n" if not $quiet;
+        if ($configuration[($i*3)+3]) {
+          $underline[$i+1]->set_active(TRUE);
+        }
+        print "    Strikethrough: $configuration[($i*3)+4]\n" if not $quiet;
+        if ($configuration[($i*3)+4]) {
+          $strikethrough[$i+1]->set_active(TRUE);
+        }
+      }
+
+      # Restore inverse setting
+      if ($cmd_inverse ne "-1") {
+        $configuration[14]=$cmd_inverse;
+      }
+
+      if ($configuration[14]) {
+        $inverse->set_active(TRUE);
+      }
+
+      # Sanity-check and restore horizontal alignment
+      if ($cmd_halign ne "-1") {
+        $configuration[15]=lc($cmd_halign);
+      }
+
+      if (($configuration[15] eq "left") || ($configuration[15] eq "center") || ($configuration[15] eq "right")) {
+        $halign->set_active_id($configuration[15]);
+        print "  HAlign: $configuration[15]\n" if not $quiet;
+      } else {
+        print "! Incorrect HAlign value: '$configuration[15]'!\n" if not $quiet;
+      }
+
+      # Sanity-check and restore vertical alignment
+      if ($cmd_valign ne "-1") {
+        $configuration[16]=lc($cmd_valign);
+      }
+
+      if (($configuration[16] eq "top") || ($configuration[16] eq "middle") || ($configuration[16] eq "bottom")) {
+        $valign->set_active_id($configuration[16]);
+        print "  VAlign: $configuration[16]\n" if not $quiet;
+      } else {
+        print "! Incorrect VAlign value: '$configuration[16]'!\n" if not $quiet;
+      }
+
+      # Sanity-check and restore tape size
+      if ($cmd_tape ne "-1") {
+        $configuration[17]=$cmd_tape;
+      }
+
+      if (($configuration[17] eq "6") || ($configuration[17] eq "12") || ($configuration[17] eq "24")) {
+        $tapetype->set_active_id($configuration[17]);
+        print "  Tape: $configuration[17]\n" if not $quiet;
+      } else {
+        print "! Incorrect tape value: '$configuration[17]'!\n" if not $quiet;
+      }
+
+     # If we have the same printer than last time still connected, select that.
+     $i=0;
+
+     if ($cmd_printer ne "") {
+       $configuration[18]=$cmd_printer;
+     }
+
+     foreach my $printer (@printers) {
+        my $printername=$printer->getName();
+        if ($configuration[18] eq $printername) {
+          print "  Printer: $configuration[18]\n" if not $quiet;
+          $printerselect->set_active($i);
+        }
+        $i++;
+      }
+
+      # Restore autocut setting.
+      if ($configuration[19]) {
+        $autocut->set_active(TRUE);
+      }
+
+      # Override it if the command parameter was set.
+      if ($cmd_autocut==0) {
+        $autocut->set_active(FALSE);
+      }
+      if ($cmd_autocut==1) {
+        $autocut->set_active(TRUE);
+      }
+
+
+      print "- Finished restoring settings.\n" if not $quiet;
+    }
+  } else {
+    print "! Configuration file not found.\n" if not $quiet;
+    return;
   }
 }
 
-sub init_ui {
-  our $gladesource=Gtk2::GladeXML->new('/usr/share/blabel/blabel.glade');
-  $gladesource->signal_autoconnect_from_package('');
-  our $preview=$gladesource->get_widget('preview');
+# Brings up the reset options window
+sub reset_window {
+  $reset_window->show();
+}
 
-  our $aboutbox=$gladesource->get_widget('aboutdialog');
+# Brings up the reset options window
+sub reset_cancel {
+  $reset_window->hide();
+}
 
-  our $printerselect=$gladesource->get_widget('printerselect');
-  our $printbutton=$gladesource->get_widget('printbutton');
-  our $previewscroll=$gladesource->get_widget('previewscroll');
-  &fill_printerlist;
+# Erases all entered text from the fields and removes selected
+# header file.
+sub reset_text {
+  my $i;
 
-  our $line1=$gladesource->get_widget('entry1');
-  our $line2=$gladesource->get_widget('entry2');
-  our $font1=$gladesource->get_widget('fontselect1');
-  our $font2=$gladesource->get_widget('fontselect2');
-  our $underline1=$gladesource->get_widget('underline1');
-  our $underline2=$gladesource->get_widget('underline2');
-  our $strikethrough1=$gladesource->get_widget('strikethrough1');
-  our $strikethrough2=$gladesource->get_widget('strikethrough2');
+  for ($i=1; $i<5; $i++) {
+    $entry[$i]->set_text("");
+  }
 
-  our $xalign=$gladesource->get_widget('xalign');
-  our $yalign=$gladesource->get_widget('yalign');
-  our $inverse=$gladesource->get_widget('inversetext');
-
-  $xalign->set_active(0);
-  $yalign->set_active(1);
-
-  &settings("load");
-
-  if ($defline1 ne "") { $line1->set_text($defline1); }
-  if ($defline2 ne "") { $line2->set_text($defline2); }
-
-  if ($deffont1 ne "") { $font1->set_font_name($deffont1); }
-  if ($deffont2 ne "") { $font2->set_font_name($deffont2); }
+  if (defined($headerfile->get_filename)) {
+    $headerfile->unselect_filename($headerfile->get_filename);
+  }
+  $reset_window->hide();
 
   &update_preview;
 }
 
-sub versioninfo {
-  print "B-label v0.06 by Ari Sovij‰rvi <ari\@sovijarvi.fi>\n";
-  print "Distributed under Perl artistic license\n\n";
+# Erases all entered text from the fields, resets style 
+# and removes selected header file.
+sub reset_style {
+  my $i;
+
+  for ($i=1; $i<5; $i++) {
+    $entry[$i]->set_text("");
+    $fontselect[$i]->set_font_name($defaultfont);
+  }
+
+  if (defined($headerfile->get_filename)) {
+    $headerfile->unselect_filename($headerfile->get_filename);
+  }
+  $reset_window->hide();
+
+  &update_preview;
 }
 
-sub helpinfo {
-  &versioninfo;
-
-  print <<___END___;
-  Optional parameters:
-
-  --version		Display version and copyright information
-  --help                List command line parameters
-  --line1               Set default text for the first line
-  --line2               Set default text for the second line
-  --font1               Set font for the first line
-  --font2               Set font for the second line
-  --print               Print directly, used with --line1 and --line2 -parameters
-
-___END___
-
+# Removes selected header file.
+sub reset_header {
+  if (defined($headerfile->get_filename)) {
+    $headerfile->unselect_filename($headerfile->get_filename);
+  }
 }
 
-sub direct_print {
-  &init_ui;
-  print "Printing from command line.\n";
-  &print_all;
+# Erases all text and restores saved font configuration
+sub reset_restore {
+  my $i;
+
+  &reset_text;
+
+  for ($i=1; $i<5; $i++) {
+    $entry[$i]->set_text("");
+
+    # Special case for when we're started for the first time and have no configuration yet.
+    if (defined($configfont[$i])) {
+      $fontselect[$i]->set_font_name($configfont[$i]);
+    }
+  }
+
+  &update_preview;
+}
+
+# Escapes the couple of characters that make Pango explode.
+# 0: text string to sort out
+sub escape {
+  my $escape_string=$_[0];
+  $escape_string =~ s/\&/&amp;/g;
+  $escape_string =~ s/\</&lt;/g;
+  $escape_string =~ s/\>/&gt;/g;
+  return $escape_string;
+}
+
+# Recreates the surface if the dimensions change.
+# 0: width
+# 1: height
+sub surfacecreate {
+  if (($_[0]!=$surface_width) || ($_[1]!=$surface_height)) {
+    $surface=Cairo::ImageSurface->create('rgb24', $_[0], $_[1]);
+    $cr=Cairo::Context->create($surface); 
+  }
+}
+
+# Creates a Pango layout from the entered text, then returns it as Pixbuf object
+# for on-screen use or PNG dumping. Optionally copies the header picture into the
+# image as well.
+sub render_text {
+  my @foreground=(0, 0, 0);
+  my @background=(255, 255, 255);
+  my $maxwidth=600;
+  my $maxheight=128; # 24mm: 128px, 12 & 9mm: 64px, 6mm: 40px
+  my $headerpic;
+  my $headerstate;
+  my $headerwidth=0;
+
+  if ($tapetype->get_active_id() eq "6") {
+    $maxheight=40;
+  } elsif ($tapetype->get_active_id() eq "12") {
+    $maxheight=64;
+  } elsif ($tapetype->get_active_id() eq "24") {
+    $maxheight=128;
+  }
+
+  ($headerpic, $headerstate)=&image_load_resize($headerfile->get_filename, $maxheight);
+
+  if ($headerstate eq "ok") {
+    print "Header: ".$headerfile->get_filename." (".$headerpic->get_width."x".$headerpic->get_height.")\n" if not $quiet;
+    $headerwidth=$headerpic->get_width+5;
+  }
+
+  # On GTK2 we used to create a 32k pixels wide surface and operate on that, but
+  # with GTK3 the paint operation alone takes forever on an older computer,
+  # so we resort to growing the surface as needed nowdays.
+  if (($maxwidth-300)<$lastwidth) {
+    $maxwidth=$lastwidth+300;
+    if ($maxwidth>32767) {
+      $maxwidth=32767;
+    }
+  }
+
+  &surfacecreate($maxwidth, $maxheight);
+  my $pango_layout=Pango::Cairo::create_layout($cr);
+  my $pango_outout;
+  $pango_layout->set_alignment(lc($halign->get_active_id()));
+
+  $pango_layout->set_spacing(-5000);
+
+  $cr->rectangle(0, 0, $maxwidth, $maxheight);
+  if ($inverse->get_active) {
+    $cr->set_source_rgb(@foreground);
+  } else {
+    $cr->set_source_rgb(@background);
+  }
+  $cr->fill;
+
+  if ($inverse->get_active) {
+    $cr->set_source_rgb(@background);
+  } else {
+    $cr->set_source_rgb(@foreground);
+  }
+
+  # We have nothing to render, so show the preview-text instead.
+  if (($entry[1]->get_text eq "") && ($entry[2]->get_text eq "") && ($entry[3]->get_text eq "") && ($entry[4]->get_text eq "")) {
+     print ">>> Preview text\n" if not $quiet;
+
+     my $effects="";
+     if ($strikethrough[1]->get_active) { $effects=$effects." strikethrough=\"true\""; }
+     if ($underline[1]->get_active) { $effects=$effects." underline=\"single\""; }
+
+     $pango_output="<span$effects font=\"".$fontselect[1]->get_font_name()."\">Preview</span>";
+
+     # Turn off the printing button too.
+     $print_now->set_sensitive(0);
+
+  } else { 
+     print ">>> User text\n" if not $quiet;
+     my $needcr=0;
+     $pango_output="";
+     for (my $i=1; $i<5; $i++) {
+         if (($needcr!=0) && ($entry[$i]->get_text ne "")) {
+           $pango_output=$pango_output."\n";
+           $needcr=0;
+         }
+
+         my $effects="";
+         if ($strikethrough[$i]->get_active) { $effects=$effects." strikethrough=\"true\""; }
+         if ($underline[$i]->get_active) { $effects=$effects." underline=\"single\""; }
+
+         print "Line $i: ".$entry[$i]->get_text."\n" if not $quiet;
+         if ($entry[$i]->get_text ne "") {
+           $pango_output=$pango_output."<span$effects font=\"".$fontselect[$i]->get_font_name()."\">".&escape($entry[$i]->get_text)."</span>";
+           $needcr=1;
+         }
+     }
+
+     # Enable the printing button if printer is something else than the default "none" entry.
+     if ($printerselect->get_active_text ne "None") {
+       $print_now->set_sensitive(1);
+     }
+  }
+
+  print "\nPango markup:\n------\n".$pango_output."\n------\n"  if not $quiet;
+
+  $pango_layout->set_markup($pango_output);
+
+  print "\nHorisontal alignment: ".$halign->get_active_text."\n" if not $quiet;
+  print "Vertical alignment: ".$valign->get_active_text."\n" if not $quiet;
+
+  my ($width, $ysize)=$pango_layout->get_pixel_size();
+
+  if ($valign->get_active_id eq "top") { $cr->move_to($headerwidth+1, 0); }
+  if ($valign->get_active_id eq "middle") { $cr->move_to($headerwidth+1, ($maxheight/2)-($ysize/2)); }
+  if ($valign->get_active_id eq "bottom") { $cr->move_to($headerwidth+1, $maxheight-$ysize); }
+
+  Pango::Cairo::show_layout($cr, $pango_layout);
+
+  $cr->show_page();
+
+  my $height=$surface->get_height;
+  my $stride=$surface->get_stride;
+  my $data=$surface->get_data;
+  $lastwidth=$width;
+
+  print "Width: $width/$maxwidth (Last: $lastwidth) (Stride: $stride)\n" if not $quiet;
+  print "Height: $height\n" if not $quiet;
+
+  print "Active printer: ".$printerselect->get_active_text."\n" if not $quiet;
+
+  my $xpixbuf=Gtk3::Gdk::Pixbuf->new_from_data($data, 'rgb', TRUE, 8, $width+$headerwidth+3, $height, $stride);
+
+  if ($headerstate eq "ok") {
+    $headerpic->composite($xpixbuf, 1, 0, $headerpic->get_width, $headerpic->get_height, 1, 0, 1, 1, GDK_INTERP_NEAREST, 255);
+  }
+
+  return $xpixbuf;
+}
+
+# Loads and scales a picture
+# 0: Image file name
+# 1: Max Y height
+sub image_load_resize {
+  my $imagefile=$_[0];
+  my $requestheight=$_[1];
+
+  if (! defined($imagefile)) {
+    return "", "notused";
+  }
+
+  my $imageobject=Gtk3::Gdk::Pixbuf->new_from_file($imagefile) || return "", "notfound";
+  my $imgwidth=$imageobject->get_width;
+  my $imgheight=$imageobject->get_height;
+  my $imgratio=$imgwidth/$imgheight;
+
+  # If the picture isn't exactly how tall we need it to be, we need to resize.
+  if ($imgheight!=$requestheight) {
+    my $scaledimage=$imageobject->scale_simple(floor(($requestheight*$imgratio)), $requestheight, 'tiles');
+    return $scaledimage, "ok";
+  } else {
+    return $imageobject, "ok";
+  }
+}
+
+# Pulls image data for the sticker in works and puts that into the image area.
+# Called as a GTK3 signal as a reaction to any changes in the GUI.
+sub update_preview {
+  $preview->set_from_pixbuf(&render_text);
+  $viewscrolled=1;
+}
+
+# Moves the scroll bar to the right if the window is too small for the whole sticker.
+# Called as a GTK3 signal after the preview area has been redrawn.
+sub scroll_preview {
+  if ($viewscrolled) {
+    my $hadj=$previewscroll->get_hadjustment;
+
+    $hadj->set_value($hadj->get_upper-$hadj->get_page_size);
+    $previewscroll->set_hadjustment($hadj);
+    $viewscrolled=0;
+  }
+}
+
+# Pulls the image data, saves it as a temporary PNG file and feeds that into the
+# printing program.
+sub print_now {
+  my $imagedata=&render_text;
+  my $autocutparam="";
+  my $quietparam="";
+
+  if ($autocut->get_active) {
+    $autocutparam="--autocut";
+  }
+
+  if ($quiet) {
+    $quietparam="--quiet";
+  }
+
+  $imagedata->save($tempfilename, "png");
+  system("blabel-print", "--file=".$tempfilename, "--printer=".$printerselect->get_active_text, $autocutparam, $quietparam);
+
+  # If we're in oneshot mode, bail out.
+  if ($oneshot) {
+    print "Oneshot enabled, exiting.\n" if not $quiet;
+    &main_quit;
+  }
+}
+
+# Called from main window's quit button, quits the program
+sub main_quit {
+  Gtk3->main_quit;
+  unlink($tempfilename);
+  if (! $nosave) {
+    &save_config;
+  }
+  print "Thanks for using B-Label!\n" if not $quiet;
+  exit;
+}
+
+sub show_about {
+  $about_window->set_version(VERSION." (".VERSIONDATE.")");
+  $about_window->run;
+  $about_window->hide;
 }
 
 sub main {
-  my $version=0;
+  our $quiet=0;
+  our $oneshot=0;
+  our $nosave=0;
+
+  my $header="";
+  my $targetprinter="";
   my $help=0;
+  my $printerlist=0;
+  my $printer="";
+  my $autocut=-1;
+  my $version=0;
   my $print=0;
+  my $tape=-1;
+  my $inv=-1;
+  my $veralign=-1;
+  my $horalign=-1;
+  my @line=();
+  my @font=();
+  my @uline=();
+  my @strthrough=();
+  our $cups=Net::CUPS->new();
 
-  GetOptions ('line1:s' => \$defline1, 'line2:s' => \$defline2,
-              'font1:s' => \$deffont1, 'font2:s' => \$deffont2,
-              'print' => \$print, 'help' => \$help, 'version' => \$version);
+  GetOptions("header:s" => \$header,
+             "printer:s" => \$targetprinter,
+             "help" => \$help,
+             "autocut!" => \$autocut,
+             "inverse!" => \$inv,
+             "quiet" => \$quiet,
+             "print" => \$print,
+             "oneshot" => \$oneshot,
+             "printerlist" => \$printerlist,
+             "version" => \$version,
+             "nosave" => \$nosave,
+             "tape:s" => \$tape,
+             "valign:s" => \$veralign,
+             "halign:s" => \$horalign,
+             "line1:s" => \$line[1],
+             "line2:s" => \$line[2],
+             "line3:s" => \$line[3],
+             "line4:s" => \$line[4],
+             "font1:s" => \$font[1],
+             "font2:s" => \$font[2],
+             "font3:s" => \$font[3],
+             "font4:s" => \$font[4],
+             "strikethrough1!" => \$strthrough[1],
+             "strikethrough2!" => \$strthrough[2],
+             "strikethrough3!" => \$strthrough[3],
+             "strikethrough4!" => \$strthrough[4],
+             "underline1!" => \$uline[1],
+             "underline2!" => \$uline[2],
+             "underline3!" => \$uline[3],
+             "underline4!" => \$uline[4]
+             );
 
-  if ($version==1) {
-    &versioninfo();
+  if ($help) {
+    pod2usage(1);
     exit;
   }
 
-  if ($help==1) {
-    &helpinfo();
+  if ($printerlist) {
+    my @printers=$cups->getDestinations();
+    foreach my $printer (@printers) {
+      my $printername=$printer->getName();
+      print "$printername\n";
+    }
     exit;
   }
 
-  if ($print==1) {
-    &direct_print();
+
+  if ($version) {
+    print "B-Label ".VERSION." (".VERSIONDATE.")\n";
     exit;
   }
 
-  &init_ui;
-  Gtk2->main;
+
+  &init_gui_config($targetprinter, $autocut, $tape, $veralign, $horalign, $inv);
+
+  # Deal with command line parameter input text and font selections
+  foreach (1..4) {
+    if ((defined($line[$_])) && ($line[$_] ne "")) {
+      $entry[$_]->set_text($line[$_]);
+    }
+
+    if ((defined($font[$_])) && ($font[$_] ne "")) {
+      $fontselect[$_]->set_font_name($font[$_]);
+    }
+
+    if (defined($strthrough[$_])) {
+      if (($strthrough[$_]==1)) {
+        $strikethrough[$_]->set_active(TRUE);
+      } else {
+        $strikethrough[$_]->set_active(FALSE);
+      }
+    }
+
+    if (defined($uline[$_])) {
+      if (($uline[$_]==1)) {
+        $underline[$_]->set_active(TRUE);
+      } else {
+        $underline[$_]->set_active(FALSE);
+      }
+    }
+  }
+
+  if ($header ne "") {
+    if (-f $header) {
+      print "Header set to $header\n" if not $quiet;
+      $headerfile->set_filename($header);
+    } else {
+      print "Unable to set header, $header does not exist.\n";
+    }
+  }
+
+  &update_preview;
+
+  if ($print) {
+    if (($line[1] ne "") || ($line[2] ne "") || ($line[3] ne "") || ($line[4] ne "")) {
+      print "Automatic print enabled, printing.\n" if not $quiet;
+      &print_now;
+    } else {
+      print "Automatic print enabled, but no text defined, ignoring.\n";
+    }
+  }
+
+  Gtk3->main;
 }
 
 &main;
+
+
+__END__
+
+=pod
+
+=head1 NAME
+
+blabel
+
+=head1 DESCRIPTION
+
+Designs variable length stickers for Brother PT-1230PC and PT-2430PC label printers.
+
+=head1 SYNOPSIS
+
+=over
+
+=item B<--header=><path and file name of a .png file>
+
+Defines header picture.
+
+=item B<--printer=><printer defined in CUPS>
+
+Overrides the default printer used.
+
+=item B<--autocut>
+
+Cuts the excess leading tape on models with automatic cutter. In models without
+the autocut hardware a dotted line is drawn where the cut should be done.
+
+=item B<--noautocut>
+
+Disables automatic cutter.
+
+=item B<--nosave>
+
+Do not save active window settings to the configuration file.
+
+=item B<--help>
+
+List options.
+
+=item B<--quiet>
+
+Supress output, except for error conditions.
+
+=item B<--printerlist>
+
+Lists available printers.
+
+=item B<--print>
+
+If there is text defined with --line# -parameters, immediately print it on start.
+
+=item B<--oneshot>
+
+Exits the program after first print. Usable with the --print -parameter or alone if
+exiting is preferred after printing.
+
+=item B<--tape>=<6|12|24>
+
+Defines tape size in millimeters. Valid options are 6, 12 and 24. Tape sizes 9mm and 18mm
+are technically as tall as 12 and 24mm heads respectively, use value 12 for 9mm tape and
+24 for 18mm tape.
+
+=item B<--valign>=<top|middle|bottom>
+
+Set vertical alignment for all text.
+
+=item B<--halign>=<left|center|right>
+
+Set horizontal alignment for all text.
+
+=item B<--[no]inverse>
+
+Turns inverse colors on or off.
+
+=item B<--line#>="Text"
+
+Where # is a number from 1 to 4. Sets the default text for the specific line.
+
+=item B<--font#>="Font specification"
+
+Where # is a number from 1 to 4. Sets the default font for the specific line. Use
+GTK font names, such as "Arial Bold 30".
+
+=item B<--[no]underline#>
+
+Where # is a number from 1 to 4. Turns underline on or off for the specific line.
+
+=item B<--[no]strikethrough#>
+
+Where # is a number from 1 to 4. Turns strikethrough on or off for the specific line.
+
+=item B<--version>
+
+Show version information.
+
+=back
+
+=head2 Typical usage examples:
+
+blabel
+
+When run without parameters, parameters saved in configuration are restored and the main
+window with empty text lines is shown.
+
+blabel --line1="Example line 1" --line2="Example line 2" --print --oneshot
+
+Sets default text for lines 1 and 2, immediately prints when the program starts, then quits.
+
+blabel --header=tux.png --line1="Tux!" --font1="Arial 30" --printer=Brother_PT-2430PC
+
+Loads tux.png as header picture, first line says "Tux!" in Arial 30 font and printer selection
+is overridden to Brother_PT-2430PC
+
+=cut

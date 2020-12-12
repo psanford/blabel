@@ -1,10 +1,9 @@
-
 [Desktop Entry]
-Name=B-label
+Name=B-Label
 GenericName=Label editor
-Comment=Create labels with Brother PT12xxPC and PT23xxPC series label printers
+Comment=Create labels for Brother P-Touch series label printers
 Exec=blabel
 Terminal=false
 Type=Application
 Icon=blabel.png
-Categories=Graphics;
+Categories=Office;Graphics;

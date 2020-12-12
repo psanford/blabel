@@ -1,0 +1,306 @@
+#!/usr/bin/perl
+# B-Label's stand-alone printing part
+
+# B-Label (C) 2011-2020 by Ari Sovijärvi <ari.sovijarvi@cleverbit.fi>
+# Released under Perl artistic license.
+
+use constant VERSION=>"v1.03 build 28";
+use constant VERSIONDATE=>"2020-04-23";
+use GD;
+use Net::CUPS;
+use Getopt::Long;
+use Pod::Usage;
+use File::Temp qw/tempfile/;
+use warnings;
+
+sub initialize {
+  my $autocut=$_[0];
+
+  my $output="";
+
+  # Invalidate
+  # Brother's specs require this, but all tested units reset well enough with
+  # the initalize command below. YMMV.
+  foreach (1..400) {
+    $output=$output.chr(0x00);
+  }
+
+  # Initialize
+  $output=chr(0x1B).'@';
+
+  # Return status mode (we don't really get to read it anywhere!)
+  # Brother's documentation mentions this needs to be sent to the printer
+  # before first print after initialize command.
+  $output=$output.chr(0x1B).'iS';
+
+  # Enable leading auto cut mode. Models with automatic cutters will cut off the
+  # excess leading tape automatically.
+  # The 7th bit of the last character controls it.
+  if ($autocut) {
+    $output=$output.chr(0x1B).'iM@';
+  } else {
+    $output=$output.chr(0x1B).'iM'.chr(0x00);
+  }
+
+  # Accidentally discovered: this turns on/off the default to cut after printing
+  # each label, so you could print multiple jobs without autocutting at end.
+  #  $output=$output.chr(0x1B).'iK'.chr(0x08);
+  #  $output=$output.chr(0x1B).'iK'.chr(0x00);
+
+  # Specify automatic margins
+  # 1st parameter = pixels
+  # 2nd parameters = pixels * 256
+  $output=$output.chr(0x1B).'id'.chr(0x14).chr(0x00);
+
+  return $output;
+}
+
+# Processes the image into Brother's raw format
+# 0: GD image object
+# 1: Quiet 0|1
+# 2: Debug 0|1
+sub processimage {
+  my $inputimage=$_[0];
+  my $quiet=$_[1];
+  my $debug=$_[2];
+  my $charcount;
+  my $x;
+  my $y;
+  my @pixel=();
+  my @inpixels=();
+  my ($width,$height)=$inputimage->getBounds();
+  my $pixelcount=0;
+  my $pixelgroups;
+  my $output="";
+
+  print "- Image file size: $width x $height\n" if not $quiet;
+
+  if (($height!=40) && ($height!=64) && ($height!=128)) {
+    die("Only 40, 64 or 128 pixels tall pictures can be processed.");
+  }
+
+  for ($x=0; $x<$width; $x++) {
+    for ($y=0; $y<$height; $y++) {
+
+      my $tmpcolor=$inputimage->getPixel($x, $y);
+      my ($r, $g, $b)=$inputimage->rgb($tmpcolor);
+      if ($r<150) { # it's B/W, so we only need to compare one value
+        print "*" if $debug;
+        $inpixels[$pixelcount]=1;
+      } else {
+        print " " if $debug;
+        $inpixels[$pixelcount]=0;
+      }
+
+      $pixelcount++;
+
+      if ($pixelcount==8) {
+        push(@pixel, ord(pack('B8', $inpixels[0].$inpixels[1].$inpixels[2].$inpixels[3].$inpixels[4].$inpixels[5].$inpixels[6].$inpixels[7])));
+        print "|" if $debug;
+        @inpixels=();
+        $pixelcount=0;
+      }
+
+    } # Y
+
+    # 1230PC is a funny device. Its software thinks it's a 2430PC and it will happily print 128 pixel (24mm) wide
+    # tape, but its printing head only has active parts in the middle. So if we're printing 12mm (or smaller) tapes
+    # on either of the devices, we have to pad each line with 40 empty pixels so the device's logical printing area
+    # actually hits the tape. The 6mm (40px) wide tape begins physically at the same spot as the 12mm tape, so the
+    # margin is the same. We need no margin for the 24mm tape.
+    if ($height==40) {
+      $output=$output.'G'.chr(($height/8)+4).chr(0x00).chr(0x00).chr(0x00).chr(0x00).chr(0x00);
+    } elsif ($height==64) {
+      $output=$output.'G'.chr(($height/8)+4).chr(0x00).chr(0x00).chr(0x00).chr(0x00).chr(0x00);
+    } elsif ($height==128) {
+      $output=$output.'G'.chr(($height/8)).chr(0x00);
+    } else {
+      die("I don't know how we got here, but I don't know how to handle $height pixels tall picture.");
+    }
+
+    foreach (@pixel) {
+      $output=$output.chr($_);
+    }
+
+    @pixel=();
+
+    print "\n" if $debug;
+  } # X
+
+  # A single linefeed is needed for the printer to begin the print job.
+  $output=$output."Z".chr(0x1A);
+
+  print "- Finished, output size is ".length($output)." bytes\n" if not $quiet;
+  return $output;
+}
+
+
+# Reads the file and prints it out.
+# 0: Printer name
+# 1: Image file
+# 2: Autocut 0|1
+# 3: Quiet 0|1
+# 4: Debug 0|1
+sub print_all {
+  my $printer=$_[0];
+  my $image=$_[1];
+  my $autocut=$_[2];
+  my $quiet=$_[3];
+  my $debug=$_[4];
+
+  print "blabel-print ".VERSION."\n\n" if not $quiet;
+
+  print "> Printing from $image\n" if not $quiet;
+
+  my $pngfile=FileHandle->new($image, "r");
+  my $outputimage=GD::Image->newFromPng($pngfile);
+  my $rawdata=&processimage($outputimage, $quiet, $debug);
+
+  if ($autocut) {
+    print "- Autocut is enabled\n" if not $quiet;
+  }
+
+  (my $printdata, my $tempfilename)=tempfile('/tmp/blabel-print.XXXXXX');
+
+  print "> Opening printer ".$printer."\n" if not $quiet;
+  binmode $printdata;
+  print $printdata &initialize($autocut);
+  print $printdata $rawdata;
+  close($printdata);
+
+  $cupsdest->printFile($tempfilename, "B-Label");
+
+  unlink($tempfilename);
+
+  print "> Done!\n" if not $quiet;
+}
+
+# Check the command line parameters and print if everything's in order.
+sub main {
+  our $cups=Net::CUPS->new();
+
+  my $filename="";
+  my $targetprinter="";
+  my $help=0;
+  my $printerlist=0;
+  my $autocut=0;
+  my $quiet=0;
+  my $debug=0;
+  my $version=0;
+
+  GetOptions("file:s" => \$filename,
+             "printer:s" => \$targetprinter,
+             "help" => \$help,
+             "autocut" => \$autocut,
+             "quiet" => \$quiet,
+             "debug" => \$debug,
+             "printerlist" => \$printerlist,
+             "version" => \$version);
+
+  if ($help) {
+    pod2usage(1);
+    exit;
+  }
+
+  if ($debug) {
+    $quiet=0;
+  }
+
+  if ($printerlist) {
+    my @printers=$cups->getDestinations();
+    foreach my $printer (@printers) {
+      my $printername=$printer->getName();
+      print "$printername\n";
+    }
+    exit;
+  }
+
+  if ($targetprinter) {
+    my @printers=$cups->getDestinations();
+
+    if (! grep {$_->getName() eq $targetprinter} @printers) {
+      print "The printer \"$targetprinter\" does not appear to be a correct CUPS destination on this system.\n";
+      print "Printers available in this system are:\n\n";
+      foreach my $printer (@printers) {
+        my $printername=$printer->getName();
+        print "$printername\n";
+      }
+      exit(1);
+    } else {
+      our $cupsdest=$cups->getDestination($targetprinter);
+    }
+  }
+
+  if ($version) {
+    print "blabel-print ".VERSION." (".VERSIONDATE.")\n";
+    exit;
+  }
+
+  if ($filename) {
+    if (! -f $filename) {
+      print "The file \"$filename\" does not exist\n";
+      exit(1);
+    }
+  }
+
+  if (($filename) && ($targetprinter)) {
+    &print_all($targetprinter, $filename, $autocut, $quiet, $debug);
+    exit;
+  }
+
+  pod2usage(1);
+}
+
+&main;
+
+__END__
+
+=pod
+
+=head1 NAME
+
+blabel-print
+
+=head1 DESCRIPTION
+
+Prints portable network graphics (.png) files to Brother PT-1230PC and PT-2430PC label printers.
+
+=head1 SYNOPSIS
+
+=over
+
+=item B<--file=><path to a .PNG file>
+
+Defines file name to be printed, required parameter
+
+=item B<--printer=><printer defined in CUPS>
+
+Defines printer name, required parameter
+
+=item B<--autocut>
+
+Cuts the excess leading tape on models with automatic cutter
+
+=item B<--help>
+
+List options
+
+=item B<--quiet>
+
+Supress output, except for error conditions
+
+=item B<--printerlist>
+
+Lists available printers
+
+=item B<--version>
+
+Show version information
+
+=back
+
+=head2 Typical usage example:
+
+blabel-print --file=test-picture.png --printer=Brother_PT-2430PC
+
+=cut

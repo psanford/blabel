@@ -1,5 +1,8 @@
 blabel usr/bin/
-blabel.png usr/share/pixmaps/
-blabel.glade usr/share/blabel/
+blabel-print usr/bin/
+blabel.glade /usr/share/blabel/
+test-picture.png /usr/share/blabel/
 blabel.desktop usr/share/applications/
+blabel.png usr/share/pixmaps/
 man/man1/blabel.1.gz usr/share/man/man1
+man/man1/blabel-print.1.gz usr/share/man/man1
